@@ -52,13 +52,13 @@ std::unordered_map<int,std::set<int>> get_ignorables(std::unordered_map<int,std:
 }*/
 
 bool interrupted = false;
-
+const int COOLDOWN_CONST = 2;
 void setup_network(int * s) {
 
   struct sockaddr_can addr;
   struct ifreq ifr;
 
-  const char * ifname = "vcan0";
+  const char * ifname = "can0";
 
   if (( * s = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
     perror("Error while opening socket");
@@ -217,6 +217,7 @@ void handle_interrupt(int signal) {
 void sniffer(int s, std::unordered_map<int, std::unordered_set<int>> ignorables) {
 
 	std::unordered_map<int, std::vector<int>> values;
+	std::unordered_map<int, std::unordered_map<int, int>> cooldown; //Don't want to print elements too often
 
 	struct can_frame frame;
 
@@ -235,15 +236,43 @@ void sniffer(int s, std::unordered_map<int, std::unordered_set<int>> ignorables)
 		}
 
 		if (values.find(frame.can_id) != values.end()) {
-
+			
+			std::vector<int> temp;
 			for (int i = 0; i < bin_arr.size(); i++) {
 				if (bin_arr[i] != values[frame.can_id][i]) {
-					std::cout << "frame "<< frame.can_id<< " bit "<< i<< "" << std::endl;
+
+					if (ignorables.find(frame.can_id) != ignorables.end() && ignorables[frame.can_id].find(i) != ignorables[frame.can_id].end()) {
+						int x = 1;	
+					} else {
+						if (cooldown.find(frame.can_id) != cooldown.end() && cooldown[frame.can_id].find(i) != cooldown[frame.can_id].end()) {
+							if (cooldown[frame.can_id][i] <= COOLDOWN_CONST) {
+								temp.push_back(i);
+								cooldown[frame.can_id][i]++;
+							}
+						} else {
+							cooldown[frame.can_id][i] = 0;
+							temp.push_back(i);
+						}
+						
+					}
+
+
 				}
 
 
 			}
+
+			if (temp.size() > 0) {
+				std::cout << "id " << frame.can_id << " : ";
+				for (int x = 0; x < temp.size(); x++) {
+
+					std::cout << temp[x] << " ";
+				}
+
+				std::cout << std::endl;
+			}
 		}
+		
 
 		values[frame.can_id] = bin_arr;
 
