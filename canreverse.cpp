@@ -26,6 +26,10 @@
 
 #include <linux/can/raw.h>
 
+#include <signal.h>
+
+#include <csignal>
+
 /*
 std::vector<float> get_variance(std::vector<std::vector<int>>) {
 
@@ -47,6 +51,8 @@ std::unordered_map<int,std::set<int>> get_ignorables(std::unordered_map<int,std:
 
 }*/
 
+bool interrupted = false;
+
 void setup_network(int * s) {
 
   struct sockaddr_can addr;
@@ -57,10 +63,10 @@ void setup_network(int * s) {
   if (( * s = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
     perror("Error while opening socket");
   }
-
+  
   strcpy(ifr.ifr_name, ifname);
   ioctl( * s, SIOCGIFINDEX, & ifr);
-
+  
   addr.can_family = AF_CAN;
   addr.can_ifindex = ifr.ifr_ifindex;
 
@@ -99,23 +105,49 @@ std::vector < int > byte_to_binary_array(unsigned char byte) {
 
 }
 
-int main(void)
+std::unordered_set<int> get_positive_variance_columns(std::vector<std::vector<int>> payload) {
+	
+	std::unordered_map<int, std::unordered_set<int>> found_values; //Store found values for each column. If there are > 1 unique values, we can assume that specific bit changed
+	std::unordered_set<int> columns;
+	
+	for (int i = 0; i < payload.size(); i++) {
+		for (int j = 0; j < payload[0].size(); j++) {
 
-{
-  int s;
+			if (columns.find(j) == columns.end()) { //If the value is already known to have changed, there is nothing further to do
+								//
+				if (found_values.find(j) != found_values.end()) { //If the key already exists in the dictionary,
+
+					if (found_values[j].find(payload[i][j]) == found_values[j].end()) { //Check if the new value is unique
+
+						columns.insert(j);
+					} 
+				} else {
+				
+					std::unordered_set<int> temp;
+					temp.insert(payload[i][j]);
+					found_values[j] = temp;
+				}
+
+			}
+		}
+	}
+
+	return columns;
+}
+
+
+std::unordered_map<int, std::vector<std::vector<int>>> create_payload_dictionary(int s) {
+	
   struct can_frame frame;
-
-  //Open connection to can socket
-  setup_network( & s);
-
-
   //Process data
-  while (true) {
+  //
+
+  std::unordered_map< int, std::vector < std::vector < int >>> data;
+
+  std::unordered_set < int > keys;
+
+  while (!interrupted) {
     get_data(s, & frame);
-
-    std::unordered_map< int, std::vector < std::vector < int >>> data;
-
-    std::unordered_set < int > keys;
 
     std::vector < int > bin_arr;
 
@@ -143,9 +175,107 @@ int main(void)
       data[frame.can_id] = temp;
 
     }
-
+	
 
   }
+
+
+  return data;
+}
+std::unordered_map<int, std::unordered_set<int>> generate_ignorables(int s) {
+	
+	std::unordered_map<int, std::vector<std::vector<int>>> data = create_payload_dictionary(s);
+
+	std::unordered_map<int, std::unordered_set<int>> ignorables;
+
+	for (const auto& payload : data) {
+
+		std::unordered_set<int> columns = get_positive_variance_columns(payload.second);	
+
+		if (columns.size() > 0) {
+
+			ignorables[payload.first] = columns;
+
+		}
+
+	}
+
+	return ignorables;
+
+}
+
+
+void handle_interrupt(int signal) {
+	
+
+
+	interrupted = true;
+
+
+}
+
+void sniffer(int s, std::unordered_map<int, std::unordered_set<int>> ignorables) {
+
+	std::unordered_map<int, std::vector<int>> values;
+
+	struct can_frame frame;
+
+	while (!interrupted) {
+		get_data(s, & frame);
+
+		std::vector < int > bin_arr;
+
+		for (int i = 0; i < frame.can_dlc; i++) {
+
+
+			std::vector < int > temp = byte_to_binary_array(frame.data[i]);
+
+			bin_arr.insert(std::end(bin_arr), std::begin(temp), std::end(temp));
+
+		}
+
+		if (values.find(frame.can_id) != values.end()) {
+
+			for (int i = 0; i < bin_arr.size(); i++) {
+				if (bin_arr[i] != values[frame.can_id][i]) {
+					std::cout << "frame "<< frame.can_id<< " bit "<< i<< "" << std::endl;
+				}
+
+
+			}
+		}
+
+		values[frame.can_id] = bin_arr;
+
+
+	}
+
+
+}
+
+int main(void)
+
+{
+
+  std::signal(SIGINT, handle_interrupt);
+  int s;
+  struct can_frame frame;
+  //Open connection to can socket
+  setup_network( & s);
+
+  std::unordered_map<int, std::unordered_set<int>> ignorables = generate_ignorables(s);
+
+  for (const auto& pair: ignorables) {
+
+	  std::cout << pair.first << std::endl;
+  }
+
+
+  interrupted = false;
+
+	
+  sniffer(s, ignorables);
+
 
   return 0;
 }
