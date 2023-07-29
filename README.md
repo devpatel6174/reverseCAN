@@ -1,6 +1,7 @@
 # reverseCAN
 Improved CAN bus analysis tool. Currently works with SocketCAN on Linux. 
 
+### Screenshots not included to comply with manufacturer policy
 
 Compile with 
 
